@@ -1,0 +1,358 @@
+---
+title: "project"
+author: "Zizhen Song"
+date: "11/30/2017"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tseries)
+library(lawstat)
+library(forecast)
+```
+
+```{r, warning = F, message = F}
+data <- read.csv('train.csv')
+test <- read.csv('test.csv')
+
+train <- data[1:264, ]
+val <- data[265:288, ]
+
+par(mfrow=c(2,2))
+plot(train[,2], ylab = "Unemployment_Rate",type='l')
+plot(train[,3], ylab = "Population",type='l')
+plot(train[,4], ylab = "Bankruptcy_Rate",type='l')
+plot(train[,5], ylab = "House_Price_Index",type='l')
+
+train_bank <- ts(train$Bankruptcy_Rate, start = c(1987, 1), end = c(2008, 12), frequency = 12)
+train_pop <- ts(train$Population, start = c(1987, 1), end = c(2008, 12), frequency = 12)
+train_unemp <- ts(train$Unemployment_Rate, start = c(1987, 1), end = c(2008, 12), frequency = 12)
+train_hpi <- ts(train$House_Price_Index, start = c(1987, 1), end = c(2008, 12), frequency = 12)
+valid_bank <- ts(val$Bankruptcy_Rate, start = c(2009, 1), end = c(2010, 12), frequency = 12)
+valid_pop <- ts(val$Population, start = c(2009, 1), end = c(2010, 12), frequency = 12)
+valid_unemp <- ts(val$Unemployment_Rate, start = c(2009, 1), end = c(2010, 12), frequency = 12)
+valid_hpi <- ts(val$House_Price_Index, start = c(2009, 1), end = c(2010, 12), frequency = 12)
+
+train_old <- train
+train_bank_old <- train_bank
+valid_bank_old <- valid_bank
+
+train_bank <- ts(train_bank_old[37:264], start = c(1990, 1), end = c(2008, 12), frequency = 12)
+
+train_bank_1995 <- ts(train_bank_old[97:264], start = c(1995, 1), end = c(2008, 12), frequency = 12)
+```
+SARIMA
+```{r}
+# search for each AR, MA, ARMA, ARIMA, SARIMA model
+search_sarima <- function(pp, dd, qq, PP, DD, QQ, input_ts){  
+    size = (pp+1)*(dd+1)*(qq+1)*(PP+1)*(DD+1)*(QQ+1)
+    RMSE_value <- c(length = size)
+    p_value <- c(length = size)
+    d_value <- c(length = size)
+    q_value <- c(length = size)
+    P_value <- c(length = size)
+    D_value <- c(length = size)
+    Q_value <- c(length = size)
+    i=0
+    for (p in seq(0, pp, 1) ){
+        for (d in seq(0, dd ,1) ){
+            for (q in seq(0, qq, 1) ){
+                for (P in seq(0, PP, 1) ){
+                    for (D in seq(0, DD, 1)){
+                        for(Q in seq(0, QQ, 1)){
+                            i = i + 1
+                            m <- arima(input_ts, order = c(p,d,q), 
+                                       seasonal = list(order = c(P,D,Q), period = 12), method = "CSS")
+                            m_pred <- forecast(m, h = 24, level=c(95))
+                            RMSE <- sqrt(mean((exp(m_pred$mean) - valid_bank )^2 ))
+                            RMSE_value[i] <- RMSE
+                            p_value[i] <- p
+                            d_value[i] <- d
+                            q_value[i] <- q
+                            P_value[i] <- P
+                            D_value[i] <- D
+                            Q_value[i] <- Q
+                            # print(c(p,d,q,P,Q,D))
+                        }
+                    }
+                }
+            }
+        }
+    }
+    index <- which(RMSE_value == min(RMSE_value))
+    cat (p_value[index], d_value[index], q_value[index], P_value[index], D_value[index], Q_value[index])
+    return(data.frame(p_value, d_value, q_value, P_value, D_value, Q_value, RMSE_value))
+}
+# if max d and D can be 2
+result <- search_sarima(5, 2, 5, 5, 2, 5, input_ts = log(train_bank_old))
+result_sort <- result[order(result$RMSE_value),]
+top10 <- result_sort[1:10,]
+top10
+
+train_bank <- ts(train_bank_old[37:264], start = c(1990, 1), end = c(2008, 12), frequency = 12)
+# after 1990
+result_new <- search_sarima(5, 2, 5, 5, 2, 5, input_ts = log(train_bank))
+result_sort_new <- result_new[order(result_new$RMSE_value),]
+top10_new <- result_sort_new[1:10,]
+top10_new
+# after 1995
+result_1995 <- search_sarima(5, 2, 5, 5, 2, 5, input_ts = log(train_bank_1995))
+result_sort_1995 <- result_1995[order(result_1995$RMSE_value),]
+top10_1995 <- result_sort_1995[1:10,]
+top10_1995
+# use these 2 models together, take geometric mean:
+m1 <- arima(log(train_bank_old), order = c(1,0,0),seasonal = list(order = c(5,1,1), period = 12), method = "CSS")
+m2 <- arima(log(train_bank), order = c(2,0,4),seasonal = list(order = c(3,1,5), period = 12), method = "CSS")
+f1 <- exp(forecast(m1, h = 24, level=c(95))$mean)
+f2 <- exp(forecast(m2, h = 24, level=c(95))$mean)
+
+
+sqrt(mean((f1 - valid_bank )^2))
+sqrt(mean((f2 - valid_bank )^2))
+
+f_mean <- sqrt(f1 * f2*f5)
+sqrt(mean((f_mean - valid_bank )^2))
+
+f_mean <- (f1+f2+f5)/3
+sqrt(mean((f_mean - valid_bank )^2))
+
+# try 
+m3 <- arima(log(train_bank), order = c(1,0,0),seasonal = list(order = c(5,1,1), period = 12), method = "CSS")
+f3 <- exp(forecast(m3, h = 24, level=c(95))$mean)
+sqrt(mean((f3 - valid_bank )^2))
+
+m4 <- arima(log(train_bank_old), order = c(2, 0, 4),seasonal = list(order = c(3, 1, 5), period = 12), method = "CSS")
+f4 <- exp(forecast(m4, h = 24, level=c(95))$mean)
+sqrt(mean((f4 - valid_bank )^2))
+
+# after 1995
+m5 <- arima(log(train_bank_1995), order = c(2,0,2),seasonal = list(order = c(5,2,0), period = 12), method = "CSS")
+f5 <- exp(forecast(m5, h = 24, level=c(95))$mean)
+sqrt(mean((f5 - valid_bank )^2))
+
+m5 <- arima(log(train_bank_1995), order = c(2,1,5),seasonal = list(order = c(5,1,1), period = 12), method = "CSS")
+f5 <- exp(forecast(m5, h = 24, level=c(95))$mean)
+sqrt(mean((f5 - valid_bank )^2))
+
+
+
+# 
+# # if max d and can only be 1
+# result_2 <- search_sarima(5, 1, 5, 5, 1, 5)
+# result_sort_2 <- result_2[order(result_2$RMSE_value),]
+# top10_2 <- result_sort_2[1:10,]
+# top10_2
+
+
+# VAR
+m <- VAR(y = data.frame(log(train_bank), log(train_hpi), log(train_pop)), p = 8, season = 12)
+f <- predict(m, n.ahead = 24, ci = 0.95)
+cat ("RMSE =", sqrt(mean(( exp(f$fcst$log.train_bank[,1]) - valid_bank )^2 )), "\n" )
+```
+
+Holt-Winters
+```{r}
+search_hw <- function(a = seq(0.1, 1, 0.1), b = seq(0.1, 1, 0.1) , c = seq(0.1, 1, 0.1), input_ts){
+    size = length(alpha_value)*length(beta_value)*length(gamma_value)
+    RMSE_value <- c(length = size)
+    alpha_value <- c(length = size)
+    beta_value <- c(length = size)
+    gamma_value <- c(length = size)
+    i = 1
+    for (alpha in a){
+        for (beta in b){
+            for (gamma in c){
+                m <- HoltWinters(input_ts, alpha=alpha, beta = beta, gamma = gamma, seasonal = "mult")
+                m_pred <- forecast(m, h = 24, level=c(95))
+                RMSE <- sqrt(mean((exp(m_pred$mean) - valid_bank )^2 ))
+                RMSE_value[i] <- RMSE
+                alpha_value[i] <- alpha
+                beta_value[i] <- beta
+                gamma_value[i] <- gamma
+                i = i + 1
+                print(c(alpha, beta, gamma, RMSE))
+            }
+        }
+    }
+    index <- which(RMSE_value == min(RMSE_value))
+    cat (alpha_value[index], beta_value[index], gamma_value[index])
+    return(data.frame(alpha_value, beta_value, gamma_value, RMSE_value))     
+}
+
+hw_default_old <- HoltWinters(log(train_bank_old), seasonal = "mult")
+hw_grid_matrix_old <- search_hw(input_ts = log(train_bank_old))
+hw_sort_old <- hw_grid_matrix_old[order(hw_grid_matrix_old$RMSE_value),]
+hw_top10_old <- hw_sort_old[1:10,]
+hw_top10_old
+
+hw_default_new <- HoltWinters(log(train_bank), seasonal = "mult")
+hw_grid_matrix <- search_hw(input_ts = log(train_bank))
+hw_sort <- hw_grid_matrix[order(hw_grid_matrix$RMSE_value),]
+hw_top10 <- hw_sort[1:10,]
+hw_top10
+
+
+hw_grid_matrix_2 <- search_hw(a = seq(0.01, 1, 0.01), b = seq(0.01, 1, 0.01) , c = seq(0.01, 1, 0.01), input_ts = log(train_bank))
+hw_sort_2 <- hw_grid_matrix_2[order(hw_grid_matrix_2$RMSE_value),]
+hw_top10_2 <- hw_sort_2[1:10,]
+hw_top10_2
+
+```
+
+
+```{r}
+
+# best sarima
+# use these 2 models together, take geometric mean:
+m1 <- arima(log(train_bank_old), order = c(1,0,0),seasonal = list(order = c(5,1,1), period = 12), method = "CSS")
+m2 <- arima(log(train_bank), order = c(2,0,4),seasonal = list(order = c(3,1,5), period = 12), method = "CSS")
+f1 <- exp(forecast(m2, h = 24, level=c(95))$mean)
+f2 <- exp(forecast(m1, h = 24, level=c(95))$mean)
+f_mean <- sqrt(f1 * f2)
+sqrt(mean(f_mean - valid_bank )^2 )
+
+# best HW
+
+HW <- HoltWinters(train_bank, alpha = 0.3 , beta = 0.9, gamma = 0.15, seasonal = 'add')
+plot(HW)
+f <- forecast(HW, h = 24)
+RMSE <- sqrt(mean((f$mean - valid_bank)^2))
+print(RMSE)
+
+
+
+
+```
+
+### Report
+```{r}
+#load train data
+data <- read.csv('train.csv', sep = ',')
+train <- data[37:264, ]
+val <- data[265:288, ]
+```
+```{r}
+train_bank <- ts(train$Bankruptcy_Rate, start = c(1990, 1), end = c(2008, 12), frequency = 12)
+train_pop <- ts(train$Population, start = c(1990, 1), end = c(2008, 12), frequency = 12)
+train_unemp <- ts(train$Unemployment_Rate, start = c(1990, 1), end = c(2008, 12), frequency = 12)
+train_hpi <- ts(train$House_Price_Index, start = c(1990, 1), end = c(2008, 12), frequency = 12)
+valid_bank <- ts(val$Bankruptcy_Rate, start = c(2009, 1), end = c(2010, 12), frequency = 12)
+valid_pop <- ts(val$Population, start = c(2009, 1), end = c(2010, 12), frequency = 12)
+valid_unemp <- ts(val$Unemployment_Rate, start = c(2009, 1), end = c(2010, 12), frequency = 12)
+valid_hpi <- ts(val$House_Price_Index, start = c(2009, 1), end = c(2010, 12), frequency = 12)
+```
+
+sarima
+```{r}
+# search for each AR, MA, ARMA, ARIMA, SARIMA model
+search_sarima <- function(pp, dd, qq, PP, DD, QQ, input_ts){  
+    size = (pp+1)*(dd+1)*(qq+1)*(PP+1)*(DD+1)*(QQ+1)
+    RMSE_value <- c(length = size)
+    p_value <- c(length = size)
+    d_value <- c(length = size)
+    q_value <- c(length = size)
+    P_value <- c(length = size)
+    D_value <- c(length = size)
+    Q_value <- c(length = size)
+    i=0
+    for (p in seq(0, pp, 1) ){
+        for (d in seq(0, dd ,1) ){
+            for (q in seq(0, qq, 1) ){
+                for (P in seq(0, PP, 1) ){
+                    for (D in seq(0, DD, 1)){
+                        for(Q in seq(0, QQ, 1)){
+                            i = i + 1
+                            m <- arima(input_ts, order = c(p,d,q), 
+                                       seasonal = list(order = c(P,D,Q), period = 12), method = "CSS")
+                            m_pred <- forecast(m, h = 24, level=c(95))
+                            RMSE <- sqrt(mean((exp(m_pred$mean) - valid_bank )^2 ))
+                            RMSE_value[i] <- RMSE
+                            p_value[i] <- p
+                            d_value[i] <- d
+                            q_value[i] <- q
+                            P_value[i] <- P
+                            D_value[i] <- D
+                            Q_value[i] <- Q
+                            # print(c(p,d,q,P,Q,D))
+                        }
+                    }
+                }
+            }
+        }
+    }
+    index <- which(RMSE_value == min(RMSE_value))
+    cat (p_value[index], d_value[index], q_value[index], P_value[index], D_value[index], Q_value[index])
+    return(data.frame(p_value, d_value, q_value, P_value, D_value, Q_value, RMSE_value))
+}
+
+result_new <- search_sarima(5, 2, 5, 5, 2, 5, input_ts = log(train_bank))
+result_sort_new <- result_new[order(result_new$RMSE_value),]
+top10_new <- result_sort_new[1:10,]
+top10_new
+```
+
+
+var
+```{r}
+  RMSE_value <- c()
+  p_value <- c()
+  for (p in seq(1, 10, 1)){
+    m <- VAR(y = data.frame(train_bank^lam1, train_hpi^lam2, train_pop^lam3), p = p, season = 12)   #, train_hpi, train_pop, train_unemp
+    f <- predict(m, n.ahead = 24, ci = 0.95)
+    RMSE <- sqrt( mean( ((f$fcst$train_bank.lam1[,1])^(1/lam1) - valid_bank)^2 ) )
+    RMSE_value <- c(RMSE_value, RMSE)
+    p_value <- c(p_value, p)
+  }
+  data.frame(p_value, RMSE_value)
+  index <- which(RMSE_value == min(RMSE_value))
+  cat (p_value[index], RMSE_value[index])
+```
+
+```{r}
+# VAR
+m <- VAR(y = data.frame(log(train_bank), log(train_hpi), log(train_pop)), p = 8, season = 12)
+f <- exp(predict(m, n.ahead = 24, ci = 0.95)$fcst$log.train_bank[,1])
+cat ("RMSE =", sqrt(mean((f - valid_bank )^2 )), "\n" )
+
+m2 <- arima(log(train_bank), order = c(2,0,4),seasonal = list(order = c(3,1,5), period = 12), method = "CSS")
+f2 <- exp(forecast(m2, h = 24, level=c(95))$mean)
+cat ("RMSE =", sqrt(mean((f2 - valid_bank )^2)), "\n" )
+```
+
+Train on whole data 1990-2010
+```{r}
+train <- data[37:312, ]
+train_bank <- ts(train$Bankruptcy_Rate, start = c(1990, 1), end = c(2010, 12), frequency = 12)
+train_pop <- ts(train$Population, start = c(1990, 1), end = c(2010, 12), frequency = 12)
+train_unemp <- ts(train$Unemployment_Rate, start = c(1990, 1), end = c(2010, 12), frequency = 12)
+train_hpi <- ts(train$House_Price_Index, start = c(1990, 1), end = c(2010, 12), frequency = 12)
+
+
+# VAR
+m <- VAR(y = data.frame(log(train_bank), log(train_hpi), log(train_pop)), p = 8, season = 12)
+# prediction: 
+f <- exp(predict(m, n.ahead=24, ci = 0.95)$fcst$log.train_bank[,1])
+
+# SARIMA
+m2 <- arima(log(train_bank), order = c(2,0,4),seasonal = list(order = c(3,1,5), period = 12), method = "CSS")
+# prediction:
+f2 <- exp(forecast(m2, h = 24, level=c(95))$mean)
+
+# the mean squared difference between two models: 
+cat ("RMSE =", sqrt(mean((f2 - f)^2)), "\n" )
+# the mean squared difference between two models is 0.005777799, which is resonable, and we take the arithmetic mean to get a better prediction
+
+pred <- (f + f2)/2
+pred2 <- sqrt(f * f2)
+# the mean squared difference between two kinds of mean=0.000139195, which is very small,
+# and we assume they are equivalent
+cat ("RMSE =", sqrt(mean((pred - pred2)^2)), "\n" )
+
+# jsut use arithmetic mean:
+pred <- (f + f2)/2
+
+
+```
+
